@@ -6,12 +6,23 @@ typedef std::vector<std::vector<int> > map_t;
 
 void print_map(const map_t &map)
 {
+    std::cout << "\n";
+    for(int i = 0; i < map.size()+2; i++)
+        std::cout << "# ";
+    std::cout << '\n';
+
     for(const auto &row: map){
+        std::cout << "# ";
         for(const auto &c: row){
             std::cout << c << " ";
         }
-        std::cout << '\n';
+        std::cout << "#\n";
     }
+    
+    for(int i = 0; i < map.size()+2; i++)
+        std::cout << "# ";
+    std::cout << "\n";
+
 }
 
 
