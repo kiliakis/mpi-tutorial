@@ -21,7 +21,7 @@ int main(int argc, char *argv[])
 
     fscanf(inFile, "%d", &target);
 
-    while (fscanf(inFile, "%d", &number) == 1){  
+    while (fscanf(inFile, "%d", &number) == 1){
         inDataVector.push_back(number);
         // printf("%d\n", number);
     }
