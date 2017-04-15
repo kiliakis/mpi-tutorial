@@ -10,6 +10,8 @@ int next_state(const map_t &map, int i, int j, int N);
 int count_neighb(const map_t &map, int i, int j);
 void fill_bounds(const map_t &map, int N);
 
+void exchange_bounds(MPI_Comm MPI_COMM, map_t map,
+        int N, MPI_Datatype &ROW, MPI_Datatype &COL);
 
 int main(int argc, char * argv[])
 {
@@ -20,21 +22,7 @@ int main(int argc, char * argv[])
     int rank, nprocs;
 
     MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
-    if(argc > 1){
-        N = stoi(argv[1]);
-    }
-
-    if(argc > 2){
-        Turns = stoi(argv[2]);
-    }
-
-    if(argc > 2){
-        P = stof(argv[3]);
-    }
-    printf("[%d/%d] Hello World!\n", rank, nprocs);
 
     // Create the communicator
     int ndim = 2;
@@ -47,57 +35,138 @@ int main(int argc, char * argv[])
             periods, 0, &COMM_2D);
     MPI_Comm_rank(COMM_2D, &rank);
     MPI_Cart_coords(COMM_2D, rank, 2, coords);
-    printf("[%d/%d] My coords are (%d,%d) \n", rank,
+    MPI_Comm_size(COMM_2D, &nprocs);
+
+
+    printf("[%d/%d] Hello World!\n", rank, nprocs);
+    printf("[%d/%d] My coordinates are (%d,%d) \n", rank,
             nprocs, coords[0], coords[1]);
+
     int west, east, north, south;
     MPI_Cart_shift(COMM_2D, 0, 1, &south, &north);
     MPI_Cart_shift(COMM_2D, 1, 1, &west, &east);
 
-    if(rank == 0){
-        printf("[%d/%d] West is (%d) \n", rank, nprocs, west);
-        printf("[%d/%d] East is (%d) \n", rank, nprocs, east);
-        printf("[%d/%d] North is (%d) \n", rank, nprocs, north);
-        printf("[%d/%d] South is (%d) \n", rank, nprocs, south);
+    // printf("[%d/%d] West is (%d) \n", rank, nprocs, west);
+    // printf("[%d/%d] East is (%d) \n", rank, nprocs, east);
+    // printf("[%d/%d] North is (%d) \n", rank, nprocs, north);
+    // printf("[%d/%d] South is (%d) \n", rank, nprocs, south);
+
+    if(argc > 1){
+        N = atoi(argv[1]);
     }
+
+    if(argc > 2){
+        Turns = atoi(argv[2]);
+    }
+
+    if(argc > 3){
+        P = atof(argv[3]);
+    }
+
+    // printf("[%d/%d] Configuration N: %d, Turns: %d, P: %.1f\n",
+    //         rank, nprocs, N, Turns, P); 
+
+    // TODO: Adjust accordingly to support any combination
+    int localN = N / dims[0];
+
+    map_t old_map = (map_t) allocate2D(localN+2);
+    map_t new_map = (map_t) allocate2D(localN+2);
+    // Create column and row data types
+    MPI_Datatype MPI_ROW, MPI_COLUMN;
+    MPI_Type_vector(localN, 1, localN+2, MPI_INT, &MPI_COLUMN);
+    MPI_Type_commit(&MPI_COLUMN);
+
+    MPI_Type_vector(1, localN, 1, MPI_INT, &MPI_ROW);
+    MPI_Type_commit(&MPI_ROW);
+
+
+    // Populate the map
+    populate_map(old_map, localN, P, rank);
+    old_map[0][0] = old_map[localN+1][localN+1] = -1;
+    old_map[0][localN+1] = old_map[localN+1][0] = -1;
     
+    for(int i = 0; i < nprocs; i++){
+        MPI_Barrier(COMM_2D);
+        if(i == rank){
+            printf("[%d/%d] Ready to print!\n", rank, nprocs);
+            print_map(old_map, localN);
+        }
+    }
 
-    // map_t map_now = (map_t) allocate2D(N+2);
-    // map_t map_next = (map_t) allocate2D(N+2);
-    // cout << "Dimension: " << N << "\n";
-    // cout << "Turns: " << Turns << "\n";
-    // cout << "Possibility: " << P << "\n";
-    // 
-    // map_t map_now = (map_t) allocate2D(N+2);
-    // map_t map_next = (map_t) allocate2D(N+2);
-    // 
-    // populate_map(map_now, N, P);
-    // print_map(map_now, N);
-    // fill_bounds(map_now, N);
-    // copy2D(map_now, map_next, N+2);
-    //  
-    // int changes = 1; 
-    // for (int turn = 0; turn < Turns && changes > 0; turn++){
-    //     for(int i = 0; i < N; i++){
-    //         for(int j = 0; j < N; j++){
-    //             map_next[i][j] = next_state(map_now, i, j, N);       
-    //         }
-    //     }
-    //     fill_bounds(map_next, N);
-    //     changes = diff(map_now, map_next, N+2);
-    //     swap(map_now, map_next);
-    // }
-    //  
-    // print_map(map_now, N);
-    // cout << "Alive cells: " << cum_sum(map_now, N+2) << '\n';
-    // 
-    // deallocate2D(map_now, N+2);
-    // deallocate2D(map_next, N+2);
+    // fill the boundary conditions
+    exchange_bounds(COMM_2D, old_map, localN, MPI_ROW, MPI_COLUMN);
+    // copy data to both arrays
+    copy2D(old_map, new_map, localN+2);
+    for(int turn = 0; turn < Turns; turn++){
+        for(int i = 0; i < localN + 2; i++){
+            for(int j = 0; j < localN + 2; j++){
+                new_map[i][j] = next_state(old_map, i, j, localN);
+            }
+        }
+        swap(new_map, old_map);
+        exchange_bounds(COMM_2D, old_map, localN, MPI_ROW, MPI_COLUMN);
+    }
 
+    int aliveCells = cum_sum2(old_map, localN);
+    printf("[%d/%d] Number of alive cells %d\n", rank, nprocs, aliveCells);
 
+    int totalAliveCells = 0;
+    MPI_Reduce(&aliveCells, &totalAliveCells, 1, 
+            MPI_INT, MPI_SUM, 0, COMM_2D);
+    
+    if(rank == 0)
+        printf("[%d/%d] Total alive cells %d\n", rank,
+            nprocs, totalAliveCells);
+
+    deallocate2D(old_map, localN+2);
+    deallocate2D(new_map, localN+2);
     MPI_Finalize();
     return 0;
 }
 
+void exchange_bounds(MPI_Comm MPI_COMM, map_t map,
+        int N, MPI_Datatype &MPI_ROW, MPI_Datatype &MPI_COLUMN)
+{
+    int west, east, north, south;
+    MPI_Cart_shift(MPI_COMM, 0, 1, &south, &north);
+    MPI_Cart_shift(MPI_COMM, 1, 1, &west, &east);
+
+    // Exchange borders
+    MPI_Request request_array[2*4];
+    // First the sends
+    // North
+    MPI_Isend(&map[1][1], 1, MPI_ROW, north, 0,
+            MPI_COMM_WORLD, &request_array[0]);
+    // South
+    MPI_Isend(&map[N][1], 1, MPI_ROW, south, 1,
+            MPI_COMM_WORLD, &request_array[1]);
+    // West 
+    MPI_Isend(&map[1][1], 1, MPI_COLUMN, west, 2,
+            MPI_COMM_WORLD, &request_array[2]);
+    // East 
+    MPI_Isend(&map[1][N], 1, MPI_COLUMN, east, 3,
+            MPI_COMM_WORLD, &request_array[3]);
+
+    // Then the receives 
+    // North 
+    MPI_Irecv(&map[0][1], 1, MPI_ROW, north, 1,
+            MPI_COMM_WORLD, &request_array[4 + 0]);
+    // South
+    MPI_Irecv(&map[N+1][1], 1, MPI_ROW, south, 0,
+            MPI_COMM_WORLD, &request_array[4 + 1]);
+    // West 
+    MPI_Irecv(&map[1][0], 1, MPI_COLUMN, west, 3,
+            MPI_COMM_WORLD, &request_array[4 + 2]);
+    // East 
+    MPI_Irecv(&map[1][N+1], 1, MPI_COLUMN, east, 2,
+            MPI_COMM_WORLD, &request_array[4 + 3]);
+
+    MPI_Status status_array[2*4];
+    MPI_Waitall(8, request_array, status_array);
+
+
+
+}
 
 int next_state(const map_t & map, int i, int j, int N)
 {
